@@ -1,16 +1,23 @@
 #include "thread_safe_queue.h"
+#include <iostream>
 
 
-MyTask::MyTask(size_t time) : time(time) {};
+MyTask::MyTask(size_t rank, size_t job) : rank(rank), job(job)  {};
 
 void MyTask::execute()
 {
-	std::this_thread::sleep_for(std::chrono::seconds(time));
+	std::this_thread::sleep_for(std::chrono::seconds(job*job));
+	std::cout << "rank: " << rank << " job " << job << " end job " << std::endl;
 }
 
-size_t MyTask::get_data()
+size_t MyTask::get_job()
 {
-	return time;
+	return job;
+}
+
+size_t MyTask::get_rank()
+{
+	return rank;
 }
 
 void ThreadSafeQueue::push(TaskPtr task) 

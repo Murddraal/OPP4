@@ -11,19 +11,21 @@ public:
 	virtual ~Task() {}
 
 	virtual void execute() = 0;
-	virtual size_t get_data() = 0;
+	virtual size_t get_rank() = 0;
+	virtual size_t get_job() = 0;
 };
 
 class MyTask : public Task
 {
 public:
-	MyTask(size_t time);
+	MyTask(size_t rank, size_t job);
 
 	void execute();
-	size_t get_data();
+	size_t get_rank();
+	size_t get_job();
 
 private:
-	size_t time;
+	size_t rank, job;
 };
 
 typedef std::shared_ptr<Task> TaskPtr;

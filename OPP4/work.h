@@ -5,20 +5,21 @@
 #include "thread_safe_queue.h"
 #include <thread>
 
-class balance
+class DynamicBalance
 {
 public:
-	balance(const int &q_size, const int &rank, const int &size);
-	~balance();
-	void do_work();
+	DynamicBalance(const int &q_size, const int &rank, const int &size);
+	~DynamicBalance();
+	void filling_queue();
+	void do_work(bool balance);
 	void dispetcher();
 	void provider();
-	TaskPtr get_job();
 	void show_iterations();
 
 private:
 	int is_provider = 1;
 	bool can_iter = false;
+	bool balance;
 
 	int size, rank, iterations;
 	int tag_ask_job = 0, tag_give_job = 1;

@@ -1,140 +1,133 @@
 #include "work.h"
 #include <iostream>
 
-balance::balance(const int &q_size, const int &rank, const int &size) :q_size(q_size), rank(rank), size(size)
+DynamicBalance::DynamicBalance(const int &q_size, const int &rank, const int &size) :q_size(q_size), rank(rank), size(size)
 {
 	queue = std::make_unique<ThreadSafeQueue>();
-
-	for (int i = 0; i < q_size; ++i)
-		queue->push(std::make_shared<MyTask>(abs(rank - (i%size))));
-
-	threads.push_back(new std::thread(&balance::do_work, this));
-	threads.push_back(new std::thread(&balance::provider, this));
-	threads.push_back(new std::thread(&balance::dispetcher, this));
+	filling_queue();
 }
 
-balance::~balance()
+void DynamicBalance::filling_queue()
 {
-	for each (auto thread in threads)
-	{
-		thread->join();
-	}
+	for (int i = 0; i < q_size; ++i)
+		queue->push(std::make_shared<MyTask>(rank, rank));
+}
+
+DynamicBalance::~DynamicBalance()
+{
+	if(balance)
+		for each (auto thread in threads)
+		{
+			thread->join();
+		}
 	threads.clear();
-	MPI_Finalize();
 	show_iterations();
 }
 
-void balance::show_iterations()
+void DynamicBalance::show_iterations()
 {
-	std::cout << "iterations in process: "<<iterations << std::endl;
+	std::cout << "iterations in process " << rank << " : " <<iterations << std::endl;
 }
 
-void balance::do_work()
+void DynamicBalance::do_work(bool _balance)
 {
-	iterations = 0;
-	while (reason_for_work || !queue->empty())
+	balance = _balance;
+	if (balance)
 	{
-		
-		++iterations;
-		std::cout << iterations << std::endl;
-			
-		auto j = queue->pop_or_wait();
-		j->execute();
-
-		if ((q_size / 2) >= queue->size())
-			cond.notify_one();
-	
-		
+		threads.push_back(new std::thread(&DynamicBalance::provider, this));
+		threads.push_back(new std::thread(&DynamicBalance::dispetcher, this));
 	}
-	std::cout << "worker " << rank << " died!\n";
+
+	iterations = 0;
+	while (reason_for_work)
+	{
+		while (!queue->empty())
+		{
+			//std::cout << iterations << std::endl;
+			auto j = TaskPtr();
+			
+			if(!queue->empty())
+				j = queue->pop_or_wait();
+			else
+				break;
+
+			j->execute();
+			++iterations;
+
+			if (balance && ((q_size / 2) >= queue->size()))
+				cond.notify_one();
+		}
+		if (!balance)
+			reason_for_work = false;
+	}
+	//std::cout << "worker " << rank << " died!\n";
 }
 
-void balance::dispetcher()
+void DynamicBalance::dispetcher()
 {
+	int k = 0;
 
-	while (reason_for_work)
-	{		
-		MPI_Barrier(MPI_COMM_WORLD);
-		int recv_size = 0, recv;
-		MPI_Status status;
-
-		
-		std::cout << "dispetcher " << rank << " going to recieve!\n";			
-		MPI_Recv(&recv_size, 1, MPI_INT, MPI_ANY_SOURCE, tag_ask_job, MPI_COMM_WORLD, &status); // Приём сообщения		
-		
-		if (queue->size() <= recv_size)
-			recv = 0;
+	while (k != size - 1)
+	{
+		int rcv_size;
+		MPI_Status st;
+		MPI_Recv(&rcv_size, 1, MPI_INT, MPI_ANY_SOURCE, tag_ask_job, MPI_COMM_WORLD, &st);
+		auto job = TaskPtr();
+		mutex.lock();
+		if (queue->size() > rcv_size)
+			job = queue->pop_or_wait();		
 		else
-			recv = queue->pop_or_wait()->get_data();
-
-		int all_recv;
-
-		MPI_Allreduce(&recv, &all_recv, 1, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
-		if (all_recv == 0)
 		{
-			MPI_Barrier(MPI_COMM_WORLD);
-			reason_for_work = false;
-			recv = -1;
+			job = std::make_shared<MyTask>(-1, -1);
+			k++;
 		}
 
-		std::cout << "dispetcher " << rank << " going to send!\n";	
-		MPI_Send(&recv, 1, MPI_INT, status.MPI_SOURCE, tag_give_job, MPI_COMM_WORLD); // Передача сообщения
-		
+		mutex.unlock();
+
+		int msg = job->get_rank();
+		MPI_Send(&msg, 1, MPI_INT, st.MPI_SOURCE, tag_give_job, MPI_COMM_WORLD);
+
 	}
-
-	int end = -1;
-	MPI_Send(&end, 1, MPI_INT, (rank+1)%size, tag_give_job, MPI_COMM_WORLD); // Передача сообщения
-
-	std::cout << "dispetcher " << rank << "  died!\n";
+	
+	//std::cout << "dispetcher " << rank << "  died!\n";
 }
 
-void balance::provider()
+void DynamicBalance::provider()
 {
+	std::mutex mutex;
 	std::unique_lock<std::mutex> lock(mutex);
 	cond.wait(lock, [this] {return (q_size / 2) >= queue->size(); });
-	while (reason_for_work)
-	{
-		MPI_Barrier(MPI_COMM_WORLD);
-		auto j = get_job();
-		/*if (is_provider == 0)
-			break;*/
-		if(j->get_data() != 0)
-			queue->push(j);
-	}
-
-	std::cout << "provider " << rank << " died!\n";
-}
-
-TaskPtr balance::get_job()
-{
-	int recv = -2;
-
-	MPI_Status status;
-
+	bool stop;
+	std::vector<int> receivers;
 	for (int i = 0; i < size; ++i)
 	{
-
-		if (i == rank)
-			continue;
-
-		std::cout << "provider " << rank << " going to send!\n";
-		int s = queue->size();
-		MPI_Send(&s, 1, MPI_INT, i, tag_ask_job, MPI_COMM_WORLD);
-
-		std::cout << "provider " << rank << " going to recieve!\n";
-		MPI_Recv(&recv, 1, MPI_INT, i, tag_give_job, MPI_COMM_WORLD, &status);
-
-
-		if (recv != 0)
-			break;
+		if (i != rank)
+			receivers.push_back(i);
 	}
 
-	/*if (recv == 0)
+	do 
 	{
-		std::cout << "provider " << rank << "going to die!\n";
-		is_provider = 0;
-	}*/
-	if (recv == -1)
-		reason_for_work = false;
-	return std::make_shared<MyTask>(recv);
+		stop = true;
+		for (int i = 0; i < size - 1; i++) 
+		{
+			if (receivers[i]!=-1)
+			{
+				int msg = queue->size();
+				MPI_Send(&msg, 1, MPI_INT, receivers[i], tag_ask_job, MPI_COMM_WORLD);
+				int job;
+				MPI_Status st;
+				MPI_Recv(&job, 1, MPI_INT, receivers[i], tag_give_job, MPI_COMM_WORLD, &st);
+				if (job != -1)
+				{
+					queue->push(std::make_shared<MyTask>(rank, job));
+					stop = false;
+				}
+				else
+					receivers[i] = -1;
+			}
+		}
+	} while (!stop);
+
+	reason_for_work = false;
+	//std::cout << "provider " << rank << " died!\n";
 }
