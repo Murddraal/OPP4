@@ -4,33 +4,47 @@
 DynamicBalance::DynamicBalance(const int &q_size, const int &rank, const int &size) :q_size(q_size), rank(rank), size(size)
 {
 	queue = std::make_unique<ThreadSafeQueue>();
-	filling_queue();
 }
 
-void DynamicBalance::filling_queue()
+void DynamicBalance::filling_queue(size_t job)
 {
 	for (int i = 0; i < q_size; ++i)
-		queue->push(std::make_shared<MyTask>(rank, rank));
+		queue->push(std::make_shared<MyTask>(rank, job));
 }
 
 DynamicBalance::~DynamicBalance()
 {
-	if(balance)
-		for each (auto thread in threads)
-		{
+	for each (auto thread in threads)
+	{
+		if (thread->joinable())
 			thread->join();
-		}
+		thread->join();
+	}
 	threads.clear();
-	show_iterations();
 }
 
-void DynamicBalance::show_iterations()
+size_t DynamicBalance::get_iterations()
 {
-	std::cout << "iterations in process " << rank << " : " <<iterations << std::endl;
+	return iterations;
+}
+
+double DynamicBalance::get_time()
+{
+	for each (auto thread in threads)
+	{
+		if(thread->joinable())
+			thread->join();
+	}
+	threads.clear();
+
+	time_end = std::chrono::high_resolution_clock::now();
+	auto time = std::chrono::duration_cast<std::chrono::duration<double>>(time_end - time_start).count();
+	return time;
 }
 
 void DynamicBalance::do_work(bool _balance)
 {
+	time_start = std::chrono::high_resolution_clock::now();
 	balance = _balance;
 	if (balance)
 	{
@@ -73,6 +87,7 @@ void DynamicBalance::dispetcher()
 		MPI_Status st;
 		MPI_Recv(&rcv_size, 1, MPI_INT, MPI_ANY_SOURCE, tag_ask_job, MPI_COMM_WORLD, &st);
 		auto job = TaskPtr();
+
 		mutex.lock();
 		if (queue->size() > rcv_size)
 			job = queue->pop_or_wait();		
